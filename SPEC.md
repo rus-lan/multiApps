@@ -132,3 +132,35 @@ Authentication is fully delegated to system `git` (ssh keys, credential helpers)
 - Auto-pull of existing clones on `init`
 - Binary releases via goreleaser
 - Mirroring maps into a tracked folder
+
+## v2 features
+
+### `mapps rm <name> [--force]`
+
+Removes one repo from the workspace. `<name>` is the folder name under `apps/` — the explicit or derived `dir` of a repos.list entry — not a URL.
+
+Order of operations (a refusal changes nothing, because the check runs before any file is touched):
+
+1. `<name>` not in repos.list → error, non-zero exit, nothing happens.
+2. Safety check — when `apps/<name>` exists and is a git clone, refuse (non-zero exit, no changes at all) if either:
+   - there are uncommitted changes (`git status --porcelain` non-empty), or
+   - there are unpushed commits: the current branch is ahead of its upstream, **or** the clone has at least one commit but no upstream configured (nothing was ever pushed anywhere).
+   `--force` skips both checks and deletes anyway.
+3. Removes the matching line from repos.list, preserving comments, blank lines, and the header.
+4. Deletes `apps/<name>` from disk and `mk/<name>.mk` if it exists.
+5. Regenerates the root Makefile.
+
+Prints each thing it removed (the repos.list line, the app dir, the mk file if any).
+
+### Empty-repository check on clone (`init` and `add`)
+
+Before cloning any repo, the tool runs `git ls-remote <url>`:
+
+- ls-remote **succeeds with zero refs** → the repo is empty: do not clone, print `repo empty, skipped: <url>`, and keep the line in repos.list (a later `init` picks the repo up once it has commits). No Makefile target is generated — `apps/<dir>` simply does not exist. Emptiness is **not** a clone failure: it never makes the exit code non-zero on its own and is tracked as its own category in the summary, which becomes `cloned N, skipped M, empty E, failed K`.
+- ls-remote **fails** (unreachable URL, auth) → the existing clone-failure path, unchanged: reason recorded, run continues, non-zero exit at the end.
+
+Leftover empty clones: when `apps/<dir>` already exists but the clone has no commits (no HEAD), it is deleted with `removed empty clone: apps/<dir>` and the repo goes through the same ls-remote check as any un-cloned entry.
+
+### `results/` directory
+
+`mapps init` creates `results/` containing an empty `.gitkeep` (created only when missing; an existing `.gitkeep` is never truncated). All LLM-generated artifacts — a new project scaffolded from the apps, a security-audit report over all apps, and similar output — belong under `results/`, never in `apps/` or the workspace root; the wrapper prompts state this. `results/` and its contents **are tracked** in workspace git: it is not added to the generated `.gitignore`, which keeps only `apps/`. `mapps add` does not create `results/` — that is `init`'s job, and `add` runs after `init` anyway.

@@ -47,6 +47,17 @@ func makeBareRepo(t *testing.T, files map[string]string) string {
 	return "file://" + bare
 }
 
+// makeEmptyBareRepo creates a bare repo with no commits at all and
+// returns its file:// URL.
+func makeEmptyBareRepo(t *testing.T) string {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	if _, err := RunGit("", "init", "--bare", bare); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	return "file://" + bare
+}
+
 func TestRunGit_Success(t *testing.T) {
 	requireGit(t)
 	dir := t.TempDir()
@@ -199,5 +210,130 @@ func TestEnsureExclude_PreservesExistingContent(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "CLAUDE.md") || !strings.Contains(string(data), "AGENTS.md") {
 		t.Errorf("new lines missing, got:\n%s", data)
+	}
+}
+
+func TestIsEmptyRemote(t *testing.T) {
+	requireGit(t)
+
+	emptyURL := makeEmptyBareRepo(t)
+	empty, err := IsEmptyRemote(emptyURL)
+	if err != nil {
+		t.Fatalf("IsEmptyRemote(empty): %v", err)
+	}
+	if !empty {
+		t.Error("want empty true for a bare repo with no commits")
+	}
+
+	fullURL := makeBareRepo(t, map[string]string{"file.txt": "hi"})
+	full, err := IsEmptyRemote(fullURL)
+	if err != nil {
+		t.Fatalf("IsEmptyRemote(full): %v", err)
+	}
+	if full {
+		t.Error("want empty false for a bare repo with commits")
+	}
+
+	if _, err := IsEmptyRemote("file:///does/not/exist.git"); err == nil {
+		t.Error("want error for an unreachable url, not empty")
+	}
+}
+
+func TestHasCommits(t *testing.T) {
+	requireGit(t)
+
+	fullURL := makeBareRepo(t, map[string]string{"file.txt": "hi"})
+	fullDest := filepath.Join(t.TempDir(), "clone")
+	if err := Clone(fullURL, fullDest, ""); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if !HasCommits(fullDest) {
+		t.Error("want HasCommits true for a clone with commits")
+	}
+
+	emptyURL := makeEmptyBareRepo(t)
+	emptyDest := filepath.Join(t.TempDir(), "clone")
+	if _, err := RunGit("", "clone", emptyURL, emptyDest); err != nil {
+		t.Fatalf("clone empty bare: %v", err)
+	}
+	if HasCommits(emptyDest) {
+		t.Error("want HasCommits false for a clone of an empty repo")
+	}
+}
+
+func TestHasUncommitted(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, map[string]string{"file.txt": "hi"})
+	dest := filepath.Join(t.TempDir(), "clone")
+	if err := Clone(url, dest, ""); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+
+	dirty, err := HasUncommitted(dest)
+	if err != nil {
+		t.Fatalf("HasUncommitted: %v", err)
+	}
+	if dirty {
+		t.Error("want HasUncommitted false for a fresh clone")
+	}
+
+	if err := os.WriteFile(filepath.Join(dest, "untracked.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+
+	dirty, err = HasUncommitted(dest)
+	if err != nil {
+		t.Fatalf("HasUncommitted: %v", err)
+	}
+	if !dirty {
+		t.Error("want HasUncommitted true with an untracked file")
+	}
+}
+
+func TestHasUnpushed(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, map[string]string{"file.txt": "hi"})
+	dest := filepath.Join(t.TempDir(), "clone")
+	if err := Clone(url, dest, ""); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+
+	unpushed, err := HasUnpushed(dest)
+	if err != nil {
+		t.Fatalf("HasUnpushed: %v", err)
+	}
+	if unpushed {
+		t.Error("want HasUnpushed false for a fresh clone")
+	}
+
+	if err := os.WriteFile(filepath.Join(dest, "new.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := RunGit(dest, "-c", "user.name=test", "-c", "user.email=test@test", "add", "-A"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, err := RunGit(dest, "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-m", "local change"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	unpushed, err = HasUnpushed(dest)
+	if err != nil {
+		t.Fatalf("HasUnpushed: %v", err)
+	}
+	if !unpushed {
+		t.Error("want HasUnpushed true after a local commit ahead of upstream")
+	}
+
+	if _, err := RunGit(dest, "checkout", "-b", "side"); err != nil {
+		t.Fatalf("checkout -b side: %v", err)
+	}
+	unpushed, err = HasUnpushed(dest)
+	if err != nil {
+		t.Fatalf("HasUnpushed: %v", err)
+	}
+	if !unpushed {
+		t.Error("want HasUnpushed true on a branch with commits but no upstream")
 	}
 }

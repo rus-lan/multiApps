@@ -82,3 +82,24 @@ func TestWrite_MentionsInstallCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestWrite_MentionsResultsDir(t *testing.T) {
+	root := t.TempDir()
+	if err := Write(root); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	for _, dest := range []string{
+		filepath.Join(root, ".claude", "skills", "mapps", "SKILL.md"),
+		filepath.Join(root, ".opencode", "commands", "mapps.md"),
+		filepath.Join(root, "PROMPT-map.md"),
+	} {
+		data, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("ReadFile %s: %v", dest, err)
+		}
+		if !strings.Contains(string(data), "results/") {
+			t.Errorf("%s does not mention results/", dest)
+		}
+	}
+}

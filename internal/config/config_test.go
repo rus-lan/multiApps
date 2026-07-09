@@ -236,3 +236,126 @@ func TestAppendRepo_KeepsExistingTrailingNewline(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", data, want)
 	}
 }
+
+func removeRepoFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "repos.list")
+	content := Header + "# keep me\n\ngit@github.com:user/api.git\nhttps://github.com/user/web.git my-web main\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+func TestRemoveRepo_DropsDerivedDirLine(t *testing.T) {
+	path := removeRepoFixture(t)
+
+	removed, ok, err := RemoveRepo(path, "api")
+	if err != nil {
+		t.Fatalf("RemoveRepo: %v", err)
+	}
+	if !ok {
+		t.Fatal("want found true")
+	}
+	if removed != "git@github.com:user/api.git" {
+		t.Errorf("removed = %q, want %q", removed, "git@github.com:user/api.git")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	want := Header + "# keep me\n\nhttps://github.com/user/web.git my-web main\n"
+	if string(data) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", data, want)
+	}
+}
+
+func TestRemoveRepo_DropsExplicitDirLineByDir(t *testing.T) {
+	path := removeRepoFixture(t)
+
+	removed, ok, err := RemoveRepo(path, "my-web")
+	if err != nil {
+		t.Fatalf("RemoveRepo: %v", err)
+	}
+	if !ok {
+		t.Fatal("want found true")
+	}
+	if removed != "https://github.com/user/web.git my-web main" {
+		t.Errorf("removed = %q, want %q", removed, "https://github.com/user/web.git my-web main")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), "git@github.com:user/api.git") {
+		t.Errorf("api line should stay, got:\n%s", data)
+	}
+	if strings.Contains(string(data), "my-web") {
+		t.Errorf("my-web line should be gone, got:\n%s", data)
+	}
+}
+
+func TestRemoveRepo_URLBasenameDoesNotMatch(t *testing.T) {
+	path := removeRepoFixture(t)
+
+	_, ok, err := RemoveRepo(path, "web")
+	if err != nil {
+		t.Fatalf("RemoveRepo: %v", err)
+	}
+	if ok {
+		t.Error("want found false for URL basename, only the effective dir should match")
+	}
+}
+
+func TestRemoveRepo_NotFound(t *testing.T) {
+	path := removeRepoFixture(t)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	removed, ok, err := RemoveRepo(path, "nope")
+	if err != nil {
+		t.Fatalf("RemoveRepo: %v", err)
+	}
+	if ok {
+		t.Error("want found false")
+	}
+	if removed != "" {
+		t.Errorf("removed = %q, want empty", removed)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("file changed on no match:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestRemoveRepo_ParseErrorPropagates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "repos.list")
+	content := "garbage one two three four\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, _, err := RemoveRepo(path, "anything")
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), ":1:") {
+		t.Errorf("error %q does not contain line number", err.Error())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("file changed on parse error, got:\n%s", data)
+	}
+}

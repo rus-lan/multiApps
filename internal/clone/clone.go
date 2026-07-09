@@ -102,6 +102,50 @@ func EnsureExclude(repoDir string) error {
 	return nil
 }
 
+// IsEmptyRemote reports whether the repo at url has no refs at all. A
+// failed ls-remote (unreachable url, auth) is returned as an error — that
+// is a normal clone failure, not emptiness.
+func IsEmptyRemote(url string) (bool, error) {
+	out, err := RunGit("", "ls-remote", "--", url)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "", nil
+}
+
+// HasCommits reports whether the clone at repoDir has at least one commit.
+func HasCommits(repoDir string) bool {
+	_, err := RunGit(repoDir, "rev-parse", "HEAD")
+	return err == nil
+}
+
+// HasUncommitted reports whether the clone at repoDir has uncommitted
+// changes, including untracked files.
+func HasUncommitted(repoDir string) (bool, error) {
+	out, err := RunGit(repoDir, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// HasUnpushed reports whether the clone at repoDir has commits that are
+// not on its upstream. A branch with commits but no upstream counts as
+// unpushed — nothing has been pushed anywhere.
+func HasUnpushed(repoDir string) (bool, error) {
+	if !HasCommits(repoDir) {
+		return false, nil
+	}
+	if _, err := RunGit(repoDir, "rev-parse", "--abbrev-ref", "@{u}"); err != nil {
+		return true, nil
+	}
+	out, err := RunGit(repoDir, "rev-list", "@{u}..HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
 func lastLine(out []byte) string {
 	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {

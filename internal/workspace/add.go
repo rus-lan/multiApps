@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rus-lan/multiApps/internal/clone"
 	"github.com/rus-lan/multiApps/internal/config"
 	"github.com/rus-lan/multiApps/internal/makefile"
 )
@@ -64,28 +63,17 @@ func Add(root, url, dir, branch string) error {
 		return err
 	}
 
-	destDir := filepath.Join(appsRoot, derived.Dir)
-	var cloneErr error
-	switch {
-	case exists(filepath.Join(destDir, ".git")):
-		fmt.Printf("skip %s (already cloned)\n", derived.Dir)
-		if err := clone.EnsureExclude(destDir); err != nil {
-			return fmt.Errorf("ensure exclude for %s: %w", derived.Dir, err)
-		}
-	case exists(destDir):
-		fmt.Printf("apps/%s exists but is not a git clone — remove it to let mapps clone\n", derived.Dir)
-	default:
-		fmt.Printf("cloning %s -> apps/%s\n", derived.URL, derived.Dir)
-		if err := clone.Clone(derived.URL, destDir, derived.Branch); err != nil {
-			cloneErr = fmt.Errorf("clone %s: %w", derived.URL, err)
-		} else if err := clone.EnsureExclude(destDir); err != nil {
-			return fmt.Errorf("ensure exclude for %s: %w", derived.Dir, err)
-		}
+	status, reason, err := cloneOne(appsRoot, derived)
+	if err != nil {
+		return err
 	}
 
 	if err := makefile.Write(root, detectTargets(appsRoot, append(repos, derived))); err != nil {
 		return fmt.Errorf("write Makefile: %w", err)
 	}
 
-	return cloneErr
+	if status == cloneFailed {
+		return fmt.Errorf("%s", reason)
+	}
+	return nil
 }

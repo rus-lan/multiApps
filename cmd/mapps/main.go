@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rus-lan/multiApps/internal/workspace"
 )
@@ -12,6 +13,7 @@ import (
 const usage = `Usage:
   mapps init [<url>...]            set up / update the workspace
   mapps add <url> [dir] [branch]   add one repo and clone it
+  mapps rm <name> [--force]        remove one repo (dir name under apps/)
   mapps help | -h | --help         print this message
 `
 
@@ -38,6 +40,9 @@ func run(args []string) int {
 
 	case "add":
 		return runAdd(args[1:])
+
+	case "rm":
+		return runRm(args[1:])
 
 	default:
 		fmt.Fprint(os.Stderr, usage)
@@ -79,6 +84,40 @@ func runAdd(args []string) int {
 		return 1
 	}
 	if err := workspace.Add(root, url, dir, branch); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func runRm(args []string) int {
+	var name string
+	force := false
+	for _, arg := range args {
+		switch {
+		case arg == "--force":
+			force = true
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprint(os.Stderr, usage)
+			return 2
+		case name != "":
+			fmt.Fprint(os.Stderr, usage)
+			return 2
+		default:
+			name = arg
+		}
+	}
+	if name == "" {
+		fmt.Fprint(os.Stderr, usage)
+		return 2
+	}
+
+	root, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := workspace.Remove(root, name, force); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

@@ -33,3 +33,17 @@ func TestRun_AddArity(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_RmUsageErrors(t *testing.T) {
+	cases := [][]string{
+		{"rm"},
+		{"rm", "--force"},
+		{"rm", "a", "b"},
+		{"rm", "-x", "a"},
+	}
+	for _, args := range cases {
+		if got := run(args); got != 2 {
+			t.Errorf("run(%v) = %d, want 2", args, got)
+		}
+	}
+}

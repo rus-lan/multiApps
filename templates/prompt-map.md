@@ -6,6 +6,10 @@ Paste this whole prompt into any LLM coding tool, running from the workspace roo
 
 Work from the workspace root: the directory that holds `repos.list` (or where it should be created).
 
+## Output location
+
+Write any generated artifacts — a new project scaffolded from the apps, a security-audit report over all apps, anything else the user asks you to produce — under `results/`, never into `apps/` or the workspace root.
+
 ## Step 1 — run the CLI
 
 - Check the binary exists: `command -v mapps`. If missing, tell the user to run `go install github.com/rus-lan/multiApps/cmd/mapps@latest` and stop.

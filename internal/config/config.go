@@ -4,6 +4,7 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -179,4 +180,38 @@ func AppendRepo(path string, r Repo) error {
 	}
 	_, err = f.WriteString(line)
 	return err
+}
+
+// RemoveRepo rewrites repos.list, dropping the first line whose dir
+// (explicit or derived) equals name. Every other line — comments, blank
+// lines, the header — is kept byte for byte. It returns the removed raw
+// line and whether a match was found; on no match the file is untouched.
+func RemoveRepo(path, name string) (string, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err
+	}
+	repos, err := Parse(bytes.NewReader(data))
+	if err != nil {
+		return "", false, err
+	}
+
+	target := 0
+	for _, r := range repos {
+		if r.Dir == name {
+			target = r.Line
+			break
+		}
+	}
+	if target == 0 {
+		return "", false, nil
+	}
+
+	lines := strings.Split(string(data), "\n")
+	removed := lines[target-1]
+	lines = append(lines[:target-1], lines[target:]...)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return "", false, err
+	}
+	return removed, true, nil
 }

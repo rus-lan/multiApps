@@ -67,6 +67,15 @@ func makeBareRepo(t *testing.T, name string, files map[string]string) string {
 	return "file://" + bare
 }
 
+// makeEmptyBareRepo creates a bare repo with no commits at all and
+// returns its file:// URL.
+func makeEmptyBareRepo(t *testing.T, name string) string {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), name+".git")
+	mustRunGit(t, "", "init", "--bare", bare)
+	return "file://" + bare
+}
+
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	old := os.Stdout
@@ -199,8 +208,8 @@ func TestInit_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init (2nd): %v", err)
 	}
-	if !strings.Contains(output, "cloned 0, skipped 2, failed 0") {
-		t.Errorf("2nd Init output = %q, want cloned 0, skipped 2, failed 0", output)
+	if !strings.Contains(output, "cloned 0, skipped 2, empty 0, failed 0") {
+		t.Errorf("2nd Init output = %q, want cloned 0, skipped 2, empty 0, failed 0", output)
 	}
 
 	after, err := os.ReadFile(listPath)
@@ -363,5 +372,323 @@ func TestInit_ParseErrorDoesNothing(t *testing.T) {
 
 	if _, statErr := os.Stat(filepath.Join(root, "apps")); !os.IsNotExist(statErr) {
 		t.Errorf("apps/ should not have been created")
+	}
+}
+
+func TestInit_EmptyRepoSkipped(t *testing.T) {
+	requireGit(t)
+
+	goodURL := makeBareRepo(t, "good", map[string]string{"go.mod": "module good\n"})
+	emptyURL := makeEmptyBareRepo(t, "hollow")
+
+	root := t.TempDir()
+	out, err := captureStdout(t, func() error {
+		return Init(root, []string{goodURL, emptyURL})
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if !strings.Contains(out, "repo empty, skipped: "+emptyURL) {
+		t.Errorf("output missing empty-skip message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "cloned 1, skipped 0, empty 1, failed 0") {
+		t.Errorf("output missing summary, got:\n%s", out)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "hollow")); !os.IsNotExist(statErr) {
+		t.Errorf("apps/hollow should not exist: %v", statErr)
+	}
+
+	listData, err := os.ReadFile(filepath.Join(root, "repos.list"))
+	if err != nil {
+		t.Fatalf("read repos.list: %v", err)
+	}
+	if !strings.Contains(string(listData), emptyURL) {
+		t.Errorf("repos.list missing empty repo url, got:\n%s", listData)
+	}
+
+	mkData, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	if strings.Contains(string(mkData), "build-hollow:") {
+		t.Errorf("Makefile should not have a target for the empty repo, got:\n%s", mkData)
+	}
+	if !strings.Contains(string(mkData), "build-good:") {
+		t.Errorf("Makefile missing target for good repo, got:\n%s", mkData)
+	}
+}
+
+func TestInit_RemovesEmptyLeftoverClone(t *testing.T) {
+	requireGit(t)
+
+	emptyURL := makeEmptyBareRepo(t, "hollow")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps"), 0o755); err != nil {
+		t.Fatalf("MkdirAll apps: %v", err)
+	}
+	mustRunGit(t, "", "clone", emptyURL, filepath.Join(root, "apps", "hollow"))
+
+	out, err := captureStdout(t, func() error {
+		return Init(root, []string{emptyURL})
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if !strings.Contains(out, "removed empty clone: apps/hollow") {
+		t.Errorf("output missing removed-empty-clone message, got:\n%s", out)
+	}
+	if !strings.Contains(out, "repo empty, skipped:") {
+		t.Errorf("output missing empty-skip message, got:\n%s", out)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "hollow")); !os.IsNotExist(statErr) {
+		t.Errorf("apps/hollow should be gone: %v", statErr)
+	}
+}
+
+func TestInit_CreatesResults(t *testing.T) {
+	requireGit(t)
+
+	root := t.TempDir()
+	if err := Init(root, nil); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	keepPath := filepath.Join(root, "results", ".gitkeep")
+	info, err := os.Stat(keepPath)
+	if err != nil {
+		t.Fatalf("stat results/.gitkeep: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Errorf("results/.gitkeep size = %d, want 0", info.Size())
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if strings.Contains(string(gitignore), "results") {
+		t.Errorf(".gitignore should not mention results, got:\n%s", gitignore)
+	}
+
+	if err := os.WriteFile(keepPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write results/.gitkeep: %v", err)
+	}
+	if err := Init(root, nil); err != nil {
+		t.Fatalf("Init (2nd): %v", err)
+	}
+	data, err := os.ReadFile(keepPath)
+	if err != nil {
+		t.Fatalf("read results/.gitkeep (2nd): %v", err)
+	}
+	if string(data) != "keep" {
+		t.Errorf("results/.gitkeep was truncated, got %q, want %q", data, "keep")
+	}
+}
+
+func TestRemove_CleanClone(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, "api", map[string]string{"go.mod": "module api\n"})
+
+	root := t.TempDir()
+	if err := Init(root, []string{url}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	writeTestFile(t, filepath.Join(root, "mk", "api.mk"), "deploy-api:\n\techo deploy\n")
+	writeTestFile(t, filepath.Join(root, "mk", "other.mk"), "deploy-other:\n\techo deploy\n")
+	otherBefore, err := os.ReadFile(filepath.Join(root, "mk", "other.mk"))
+	if err != nil {
+		t.Fatalf("read other.mk: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return Remove(root, "api", false)
+	})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	listData, err := os.ReadFile(filepath.Join(root, "repos.list"))
+	if err != nil {
+		t.Fatalf("read repos.list: %v", err)
+	}
+	if strings.Contains(string(listData), url) {
+		t.Errorf("repos.list still contains %q, got:\n%s", url, listData)
+	}
+	if !strings.HasPrefix(string(listData), config.Header) {
+		t.Errorf("repos.list lost its header, got:\n%s", listData)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "api")); !os.IsNotExist(statErr) {
+		t.Errorf("apps/api should be gone: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "mk", "api.mk")); !os.IsNotExist(statErr) {
+		t.Errorf("mk/api.mk should be gone: %v", statErr)
+	}
+
+	otherAfter, err := os.ReadFile(filepath.Join(root, "mk", "other.mk"))
+	if err != nil {
+		t.Fatalf("read other.mk (after): %v", err)
+	}
+	if string(otherBefore) != string(otherAfter) {
+		t.Errorf("mk/other.mk was modified")
+	}
+
+	mkData, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	if strings.Contains(string(mkData), "build-api:") {
+		t.Errorf("Makefile still has a target for api, got:\n%s", mkData)
+	}
+
+	for _, want := range []string{"removed from repos.list:", "removed apps/api", "removed mk/api.mk"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRemove_RefusesUncommitted(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, "api", map[string]string{"go.mod": "module api\n"})
+
+	root := t.TempDir()
+	if err := Init(root, []string{url}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	writeTestFile(t, filepath.Join(root, "apps", "api", "dirty.txt"), "x")
+
+	err := Remove(root, "api", false)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "uncommitted") {
+		t.Errorf("error %q does not mention uncommitted", err.Error())
+	}
+
+	listData, err := os.ReadFile(filepath.Join(root, "repos.list"))
+	if err != nil {
+		t.Fatalf("read repos.list: %v", err)
+	}
+	if !strings.Contains(string(listData), url) {
+		t.Errorf("repos.list should be unchanged, got:\n%s", listData)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "api")); statErr != nil {
+		t.Errorf("apps/api should still be present: %v", statErr)
+	}
+
+	if err := Remove(root, "api", true); err != nil {
+		t.Fatalf("Remove (force): %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "api")); !os.IsNotExist(statErr) {
+		t.Errorf("apps/api should be gone after --force: %v", statErr)
+	}
+}
+
+func TestRemove_RefusesUnpushed(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, "api", map[string]string{"go.mod": "module api\n"})
+
+	root := t.TempDir()
+	if err := Init(root, []string{url}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	appDir := filepath.Join(root, "apps", "api")
+	writeTestFile(t, filepath.Join(appDir, "new.txt"), "x")
+	commitAll(t, appDir, "local change")
+
+	err := Remove(root, "api", false)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unpushed") {
+		t.Errorf("error %q does not mention unpushed", err.Error())
+	}
+	if _, statErr := os.Stat(appDir); statErr != nil {
+		t.Errorf("apps/api should still be present: %v", statErr)
+	}
+
+	if err := Remove(root, "api", true); err != nil {
+		t.Fatalf("Remove (force): %v", err)
+	}
+	if _, statErr := os.Stat(appDir); !os.IsNotExist(statErr) {
+		t.Errorf("apps/api should be gone after --force: %v", statErr)
+	}
+}
+
+func TestRemove_RefusesUnpushed_NoUpstream(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, "api", map[string]string{"go.mod": "module api\n"})
+
+	root := t.TempDir()
+	if err := Init(root, []string{url}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	appDir := filepath.Join(root, "apps", "api")
+	mustRunGit(t, appDir, "checkout", "-b", "side")
+
+	err := Remove(root, "api", false)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unpushed") {
+		t.Errorf("error %q does not mention unpushed", err.Error())
+	}
+}
+
+func TestRemove_NotFound(t *testing.T) {
+	requireGit(t)
+
+	url := makeBareRepo(t, "api", map[string]string{"go.mod": "module api\n"})
+
+	root := t.TempDir()
+	if err := Init(root, []string{url}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	listBefore, err := os.ReadFile(filepath.Join(root, "repos.list"))
+	if err != nil {
+		t.Fatalf("read repos.list: %v", err)
+	}
+	mkBefore, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+
+	err = Remove(root, "nope", false)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not in repos.list") {
+		t.Errorf("error %q does not mention not in repos.list", err.Error())
+	}
+
+	listAfter, err := os.ReadFile(filepath.Join(root, "repos.list"))
+	if err != nil {
+		t.Fatalf("read repos.list (after): %v", err)
+	}
+	if string(listBefore) != string(listAfter) {
+		t.Errorf("repos.list changed on not-found")
+	}
+	mkAfter, err := os.ReadFile(filepath.Join(root, "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile (after): %v", err)
+	}
+	if string(mkBefore) != string(mkAfter) {
+		t.Errorf("Makefile changed on not-found")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "apps", "api")); statErr != nil {
+		t.Errorf("apps/api should be unaffected: %v", statErr)
 	}
 }

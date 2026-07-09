@@ -20,6 +20,64 @@ type cloneFailure struct {
 	reason string
 }
 
+// cloneStatus says what happened to one repos.list entry during a clone
+// pass.
+type cloneStatus int
+
+const (
+	cloneDone cloneStatus = iota
+	cloneSkipped
+	cloneEmpty
+	cloneFailed
+)
+
+// cloneOne brings apps/<dir> in line with one repos.list entry: it drops a
+// leftover clone that has no commits, skips an existing clone, skips an
+// empty remote, or clones. reason is set only for cloneFailed; a non-nil
+// error is a hard stop for the whole run.
+func cloneOne(appsRoot string, r config.Repo) (cloneStatus, string, error) {
+	dir := filepath.Join(appsRoot, r.Dir)
+
+	if exists(filepath.Join(dir, ".git")) && !clone.HasCommits(dir) {
+		if err := os.RemoveAll(dir); err != nil {
+			return cloneFailed, "", fmt.Errorf("remove empty clone apps/%s: %w", r.Dir, err)
+		}
+		fmt.Printf("removed empty clone: apps/%s\n", r.Dir)
+	}
+
+	switch {
+	case exists(filepath.Join(dir, ".git")):
+		fmt.Printf("skip %s (already cloned)\n", r.Dir)
+		if err := clone.EnsureExclude(dir); err != nil {
+			return cloneSkipped, "", fmt.Errorf("ensure exclude for %s: %w", r.Dir, err)
+		}
+		return cloneSkipped, "", nil
+
+	case exists(dir):
+		fmt.Printf("apps/%s exists but is not a git clone — remove it to let mapps clone\n", r.Dir)
+		return cloneSkipped, "", nil
+
+	default:
+		empty, err := clone.IsEmptyRemote(r.URL)
+		if err != nil {
+			return cloneFailed, err.Error(), nil
+		}
+		if empty {
+			fmt.Printf("repo empty, skipped: %s\n", r.URL)
+			return cloneEmpty, "", nil
+		}
+
+		fmt.Printf("cloning %s -> apps/%s\n", r.URL, r.Dir)
+		if err := clone.Clone(r.URL, dir, r.Branch); err != nil {
+			return cloneFailed, err.Error(), nil
+		}
+		if err := clone.EnsureExclude(dir); err != nil {
+			return cloneDone, "", fmt.Errorf("ensure exclude for %s: %w", r.Dir, err)
+		}
+		return cloneDone, "", nil
+	}
+}
+
 // Init sets up or updates the workspace at root: creates repos.list if
 // needed, appends urls, clones every repo not yet cloned, and
 // (re)generates the Makefile and wrapper files. Every step is safe to
@@ -61,31 +119,23 @@ func Init(root string, urls []string) error {
 		return err
 	}
 
-	var cloned, skipped int
+	var cloned, skipped, empty int
 	var failures []cloneFailure
 
 	for _, r := range repos {
-		dir := filepath.Join(appsRoot, r.Dir)
-		switch {
-		case exists(filepath.Join(dir, ".git")):
-			fmt.Printf("skip %s (already cloned)\n", r.Dir)
-			skipped++
-			if err := clone.EnsureExclude(dir); err != nil {
-				return fmt.Errorf("ensure exclude for %s: %w", r.Dir, err)
-			}
-		case exists(dir):
-			fmt.Printf("apps/%s exists but is not a git clone — remove it to let mapps clone\n", r.Dir)
-			skipped++
-		default:
-			fmt.Printf("cloning %s -> apps/%s\n", r.URL, r.Dir)
-			if err := clone.Clone(r.URL, dir, r.Branch); err != nil {
-				failures = append(failures, cloneFailure{url: r.URL, reason: err.Error()})
-				continue
-			}
+		status, reason, err := cloneOne(appsRoot, r)
+		if err != nil {
+			return err
+		}
+		switch status {
+		case cloneDone:
 			cloned++
-			if err := clone.EnsureExclude(dir); err != nil {
-				return fmt.Errorf("ensure exclude for %s: %w", r.Dir, err)
-			}
+		case cloneSkipped:
+			skipped++
+		case cloneEmpty:
+			empty++
+		case cloneFailed:
+			failures = append(failures, cloneFailure{url: r.URL, reason: reason})
 		}
 	}
 
@@ -97,6 +147,10 @@ func Init(root string, urls []string) error {
 		return fmt.Errorf("write wrapper files: %w", err)
 	}
 
+	if err := ensureResults(root); err != nil {
+		return fmt.Errorf("create results/: %w", err)
+	}
+
 	if err := ensureGitignore(root); err != nil {
 		return err
 	}
@@ -105,7 +159,7 @@ func Init(root string, urls []string) error {
 		return err
 	}
 
-	fmt.Printf("cloned %d, skipped %d, failed %d\n", cloned, skipped, len(failures))
+	fmt.Printf("cloned %d, skipped %d, empty %d, failed %d\n", cloned, skipped, empty, len(failures))
 	for _, f := range failures {
 		fmt.Printf("  %s: %s\n", f.url, f.reason)
 	}
@@ -166,6 +220,20 @@ func detectTargets(appsRoot string, repos []config.Repo) []makefile.Target {
 		}
 	}
 	return targets
+}
+
+// ensureResults creates results/ with an empty .gitkeep. An existing
+// .gitkeep is never touched, so re-running init cannot truncate it.
+func ensureResults(root string) error {
+	dir := filepath.Join(root, "results")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	keep := filepath.Join(dir, ".gitkeep")
+	if exists(keep) {
+		return nil
+	}
+	return os.WriteFile(keep, nil, 0o644)
 }
 
 func ensureGitignore(root string) error {
