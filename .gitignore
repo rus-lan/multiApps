@@ -1,0 +1,12 @@
+# Research output (ephemeral)
+.research/
+
+# Built binary
+/mapps
+
+# Go
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
