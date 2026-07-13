@@ -14,8 +14,11 @@ const usage = `Usage:
   mapps init [<url>...]            set up / update the workspace
   mapps add <url> [dir] [branch]   add one repo and clone it
   mapps rm <name> [--force]        remove one repo (dir name under apps/)
+  mapps version | -v | --version   print the version
   mapps help | -h | --help         print this message
 `
+
+var version = "dev"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -43,6 +46,10 @@ func run(args []string) int {
 
 	case "rm":
 		return runRm(args[1:])
+
+	case "version", "-v", "--version":
+		fmt.Println(version)
+		return 0
 
 	default:
 		fmt.Fprint(os.Stderr, usage)

@@ -6,11 +6,58 @@ The binary does all deterministic work (parsing, cloning, Makefile generation). 
 
 ## Install
 
+Linux / macOS (and WSL):
+
+```
+curl -fsSL https://raw.githubusercontent.com/rus-lan/multiApps/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```
+irm https://raw.githubusercontent.com/rus-lan/multiApps/main/install.ps1 | iex
+```
+
+Both scripts detect OS/arch, download the matching release binary, verify its `checksums.txt` entry before installing, and need no sudo/admin rights. Unix installs to `~/.local/bin`; Windows installs to `%LOCALAPPDATA%\Programs\mapps`. If the install directory isn't already on `PATH`, the script prints the exact line to add to your shell rc (`~/.bashrc`, `~/.zshrc`, `~/.profile`) — on Windows it updates your user `PATH` automatically and asks you to open a new terminal.
+
+Env overrides (set before running the piped command):
+
+- `MAPPS_VERSION` — pin a release instead of installing latest, e.g. `MAPPS_VERSION=v0.1.0 curl -fsSL .../install.sh | sh`.
+- `MAPPS_INSTALL_DIR` — unix only, install somewhere other than `~/.local/bin`, e.g. `MAPPS_INSTALL_DIR=/usr/local/bin curl -fsSL .../install.sh | sh`.
+
+Verify the install:
+
+```
+mapps version
+```
+
+### Alternative — install with Go
+
 ```
 go install github.com/rus-lan/multiApps/cmd/mapps@latest
 ```
 
-Requires Go and a system `git` binary on `PATH`. Linux and macOS only. `mapps` has zero third-party dependencies and shells out to `git` for all repository work — authentication (SSH keys, credential helpers) is entirely `git`'s responsibility; `mapps` never stores or reads tokens.
+Requires a Go toolchain on `PATH`.
+
+`mapps` itself runs natively on Linux, macOS, and Windows, has zero third-party dependencies, and shells out to `git` for all repository work — authentication (SSH keys, credential helpers) is entirely `git`'s responsibility; `mapps` never stores or reads tokens. The Makefile it generates is a different story: its targets need GNU `make` and a POSIX shell, so on Windows run the `make ...` workflow from WSL or Git Bash, not plain PowerShell/cmd.
+
+### Uninstall
+
+Unix:
+
+```
+rm ~/.local/bin/mapps
+```
+
+(or the directory you chose via `MAPPS_INSTALL_DIR`).
+
+Windows (PowerShell):
+
+```
+Remove-Item "$env:LOCALAPPDATA\Programs\mapps\mapps.exe"
+```
+
+Then optionally remove `%LOCALAPPDATA%\Programs\mapps` from your user `PATH` in the environment-variables settings.
 
 ## Quickstart (terminal only)
 
