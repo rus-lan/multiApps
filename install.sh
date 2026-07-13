@@ -52,7 +52,7 @@ download() {
 	if [ "$DOWNLOADER" = "curl" ]; then
 		curl -fsSL "$url" -o "$dest"
 	else
-		wget -qO "$dest" "$url"
+		wget -nv -O "$dest" "$url"
 	fi
 }
 
@@ -66,14 +66,12 @@ pick_downloader() {
 	fi
 }
 
-# make_temp_file <suffix> - suffix keeps calls in the same script run from colliding
-# when falling back to a PID-based name (no mktemp available).
+# make_temp_file - creates a securely-named temp file via mktemp.
 make_temp_file() {
-	suffix="$1"
 	if command -v mktemp >/dev/null 2>&1; then
 		mktemp
 	else
-		echo "${TMPDIR:-/tmp}/mapps.$$.${suffix}"
+		err "mktemp is required but was not found"
 	fi
 }
 
@@ -117,9 +115,11 @@ main() {
 
 	DOWNLOADER="$(pick_downloader)"
 
-	bin_tmp="$(make_temp_file bin)"
-	sums_tmp="$(make_temp_file sums)"
-	trap 'rm -f "$bin_tmp" "$sums_tmp"' EXIT
+	bin_tmp=""
+	sums_tmp=""
+	trap 'rm -f "$bin_tmp" "$sums_tmp" 2>/dev/null' EXIT
+	bin_tmp="$(make_temp_file)"
+	sums_tmp="$(make_temp_file)"
 
 	log "downloading $asset..."
 	download "${base}/${asset}" "$bin_tmp"
@@ -128,7 +128,10 @@ main() {
 	log "verifying checksum..."
 	verify_checksum "$asset" "$bin_tmp" "$sums_tmp"
 
-	INSTALL_DIR="${MAPPS_INSTALL_DIR:-$HOME/.local/bin}"
+	if [ -z "${MAPPS_INSTALL_DIR:-}" ] && [ -z "${HOME:-}" ]; then
+		err "HOME is not set; set MAPPS_INSTALL_DIR to choose an install directory"
+	fi
+	INSTALL_DIR="${MAPPS_INSTALL_DIR:-${HOME:-}/.local/bin}"
 	mkdir -p "$INSTALL_DIR"
 	mv "$bin_tmp" "$INSTALL_DIR/mapps"
 	chmod +x "$INSTALL_DIR/mapps"
