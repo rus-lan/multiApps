@@ -70,7 +70,7 @@ func EnsureExclude(repoDir string) error {
 
 	existing := make(map[string]bool)
 	for _, line := range strings.Split(string(data), "\n") {
-		existing[line] = true
+		existing[strings.TrimRight(line, "\r")] = true
 	}
 
 	var toAdd []string

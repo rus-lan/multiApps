@@ -50,7 +50,11 @@ func Add(root, url, dir, branch string) error {
 		derived.Dir = d
 	}
 
-	if err := config.CheckCollisions(append(append([]config.Repo{}, repos...), derived)); err != nil {
+	all := append(append([]config.Repo{}, repos...), derived)
+	if err := config.CheckCollisions(all); err != nil {
+		return err
+	}
+	if err := makefile.CheckVarCollisions(all); err != nil {
 		return err
 	}
 

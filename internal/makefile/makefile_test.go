@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rus-lan/multiApps/internal/config"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -164,6 +166,30 @@ func TestDetect_NodeBrokenJSON(t *testing.T) {
 	got := Detect(root, "web")
 	if got.Stack != "unknown" {
 		t.Fatalf("Stack = %q, want unknown for broken package.json", got.Stack)
+	}
+}
+
+func TestCheckVarCollisions(t *testing.T) {
+	colliding := []config.Repo{
+		{URL: "git@github.com:a/web-app.git", Dir: "web-app"},
+		{URL: "git@github.com:b/web.app.git", Dir: "web.app"},
+	}
+	err := CheckVarCollisions(colliding)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	for _, want := range []string{"web-app", "web.app", "web_app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+
+	safe := []config.Repo{
+		{URL: "git@github.com:a/api.git", Dir: "api"},
+		{URL: "git@github.com:b/web.git", Dir: "web"},
+	}
+	if err := CheckVarCollisions(safe); err != nil {
+		t.Errorf("non-colliding dirs should not error, got: %v", err)
 	}
 }
 

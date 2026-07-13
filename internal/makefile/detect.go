@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/rus-lan/multiApps/internal/config"
 )
 
 // Target is one repo's row in the generated Makefile.
@@ -22,8 +24,29 @@ type Target struct {
 
 var varUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
-func varName(dir string) string {
+// VarName sanitizes dir into the make variable suffix Detect uses for it:
+// every character outside [A-Za-z0-9_] becomes "_".
+func VarName(dir string) string {
 	return varUnsafe.ReplaceAllString(dir, "_")
+}
+
+// CheckVarCollisions fails when two repos' dirs sanitize to the same make
+// variable name — e.g. "web-app" and "web.app" both become "web_app". Two
+// such repos would make Detect's caller emit duplicate BUILD_/RUN_/TEST_
+// variables in the generated Makefile, and GNU make silently keeps only
+// the last one. It runs over the full list before the Makefile is
+// generated.
+func CheckVarCollisions(repos []config.Repo) error {
+	seen := make(map[string]string, len(repos))
+	for _, r := range repos {
+		v := VarName(r.Dir)
+		if first, ok := seen[v]; ok && first != r.Dir {
+			return fmt.Errorf("dirs %q and %q map to the same make variable %q — set an explicit dir for one of them in repos.list",
+				first, r.Dir, v)
+		}
+		seen[v] = r.Dir
+	}
+	return nil
 }
 
 // Detect looks at apps/<dir> markers and returns its build/run/test
@@ -31,7 +54,7 @@ func varName(dir string) string {
 // then a Makefile of its own, else unknown.
 func Detect(appsRoot, dir string) Target {
 	root := filepath.Join(appsRoot, dir)
-	v := varName(dir)
+	v := VarName(dir)
 
 	if exists(filepath.Join(root, "go.mod")) {
 		return Target{

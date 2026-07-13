@@ -93,6 +93,8 @@ func Init(root string, urls []string) error {
 		return err
 	}
 
+	var newURLs []string
+	prospective := append([]config.Repo{}, repos...)
 	for _, url := range urls {
 		if !validURL(url) {
 			return fmt.Errorf("argument %q: not a git url", url)
@@ -104,15 +106,23 @@ func Init(root string, urls []string) error {
 		if containsURL(repos, url) {
 			continue
 		}
+		newURLs = append(newURLs, url)
+		prospective = append(prospective, config.Repo{URL: url, Dir: dir})
+	}
+
+	if err := config.CheckCollisions(prospective); err != nil {
+		return err
+	}
+	if err := makefile.CheckVarCollisions(prospective); err != nil {
+		return err
+	}
+
+	for _, url := range newURLs {
 		if err := config.AppendRepo(listPath, config.Repo{URL: url}); err != nil {
 			return fmt.Errorf("append %q to repos.list: %w", url, err)
 		}
-		repos = append(repos, config.Repo{URL: url, Dir: dir})
 	}
-
-	if err := config.CheckCollisions(repos); err != nil {
-		return err
-	}
+	repos = prospective
 
 	appsRoot := filepath.Join(root, "apps")
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {

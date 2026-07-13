@@ -315,6 +315,46 @@ func TestInit_CollisionFailsBeforeCloning(t *testing.T) {
 	}
 }
 
+func TestInit_VarCollisionNoPartialWrite(t *testing.T) {
+	requireGit(t)
+
+	urlA := makeBareRepo(t, "web-app", map[string]string{"a.txt": "a"})
+	urlB := makeBareRepo(t, "web.app", map[string]string{"b.txt": "b"})
+
+	root := t.TempDir()
+	listPath := filepath.Join(root, "repos.list")
+	seed := config.Header
+	if err := os.WriteFile(listPath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("write repos.list: %v", err)
+	}
+
+	err := Init(root, []string{urlA, urlB})
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "make variable") {
+		t.Errorf("error %q does not mention the var collision", err.Error())
+	}
+
+	after, err := os.ReadFile(listPath)
+	if err != nil {
+		t.Fatalf("read repos.list: %v", err)
+	}
+	if string(after) != seed {
+		t.Errorf("repos.list changed on var-collision error:\nbefore:\n%s\nafter:\n%s", seed, after)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(root, "apps")); statErr == nil {
+		entries, err := os.ReadDir(filepath.Join(root, "apps"))
+		if err != nil {
+			t.Fatalf("ReadDir apps: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("apps/ should have no new directories, got: %v", entries)
+		}
+	}
+}
+
 func TestInit_PartialFailure(t *testing.T) {
 	requireGit(t)
 

@@ -213,6 +213,35 @@ func TestEnsureExclude_PreservesExistingContent(t *testing.T) {
 	}
 }
 
+func TestEnsureExclude_CRLFIdempotent(t *testing.T) {
+	requireGit(t)
+	url := makeBareRepo(t, map[string]string{"file.txt": "hello"})
+
+	dest := filepath.Join(t.TempDir(), "clone")
+	if err := Clone(url, dest, ""); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+
+	excludePath := filepath.Join(dest, ".git", "info", "exclude")
+	if err := os.WriteFile(excludePath, []byte("CLAUDE.md\r\nAGENTS.md\r\n"), 0o644); err != nil {
+		t.Fatalf("write exclude: %v", err)
+	}
+
+	if err := EnsureExclude(dest); err != nil {
+		t.Fatalf("EnsureExclude: %v", err)
+	}
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read exclude: %v", err)
+	}
+	if strings.Count(string(data), "CLAUDE.md") != 1 {
+		t.Errorf("CLAUDE.md duplicated against a CRLF exclude file, got:\n%s", data)
+	}
+	if strings.Count(string(data), "AGENTS.md") != 1 {
+		t.Errorf("AGENTS.md duplicated against a CRLF exclude file, got:\n%s", data)
+	}
+}
+
 func TestIsEmptyRemote(t *testing.T) {
 	requireGit(t)
 
